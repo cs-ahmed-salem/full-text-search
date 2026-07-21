@@ -1,0 +1,54 @@
+syntax = "proto3";
+
+package fulltext_search.v1;
+
+option py_generic_services = false;
+
+// Full-text search service exposing algorithm operations over gRPC.
+service FullTextSearch {
+  // Index documents into the active search algorithm.
+  rpc Index(IndexRequest) returns (IndexResponse);
+
+  // Search the index and return ranked hits.
+  rpc Search(SearchRequest) returns (SearchResponse);
+
+  // Remove all indexed documents when supported by the algorithm.
+  rpc Clear(ClearRequest) returns (ClearResponse);
+}
+
+message Document {
+  string id = 1;
+  string content = 2;
+  map<string, string> metadata = 3;
+}
+
+message IndexRequest {
+  repeated Document documents = 1;
+}
+
+message IndexResponse {
+  int32 indexed_count = 1;
+}
+
+message SearchRequest {
+  string query = 1;
+  int32 limit = 2;
+}
+
+message SearchResult {
+  string document_id = 1;
+  double score = 2;
+  Document document = 3;
+  repeated string highlights = 4;
+  map<string, string> metadata = 5;
+}
+
+message SearchResponse {
+  repeated SearchResult results = 1;
+}
+
+message ClearRequest {}
+
+message ClearResponse {
+  bool cleared = 1;
+}
