@@ -10,6 +10,8 @@ import pytest
 
 from fulltext_search.datasources.base import DataSource, Document
 from fulltext_search.datasources.local import LocalFileSource
+from fulltext_search.datasources.paging import as_page_source
+from fulltext_search.datasources.paging_api import PagingApiSource
 from fulltext_search.datasources.postgres import PostgresTableSource, _quote_ident
 from fulltext_search.datasources.remote import RemoteEndpointSource
 
@@ -113,6 +115,119 @@ def test_remote_endpoint_source_requires_connect() -> None:
     source = RemoteEndpointSource("https://example.test/docs")
     with pytest.raises(RuntimeError, match="not connected"):
         list(source.iter_documents())
+
+
+def test_paging_api_source_walks_pages() -> None:
+    seen_pages: list[int] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.headers.get("x-internal-pass") == "secret"
+        assert request.url.params.get("filter") == "ready"
+        page = int(request.url.params["page"])
+        size = int(request.url.params["size"])
+        seen_pages.append(page)
+        assert size == 2
+
+        pages = {
+            0: {
+                "content": [
+                    {"id": "1", "description": "one", "title": "t1"},
+                    {"id": "2", "description": "two", "title": "t2"},
+                ],
+                "last": False,
+            },
+            1: {
+                "content": [
+                    {"id": "3", "description": "three", "title": "t3"},
+                ],
+                "last": True,
+            },
+        }
+        return httpx.Response(200, json=pages[page])
+
+    source = PagingApiSource(
+        "https://example.test/tasks",
+        headers={"x-internal-pass": "secret"},
+        params={"filter": "ready"},
+        page_size=2,
+    )
+    source._client = httpx.Client(transport=httpx.MockTransport(handler))
+
+    try:
+        docs = list(source.iter_documents())
+    finally:
+        source.close()
+
+    assert seen_pages == [0, 1]
+    assert [d.id for d in docs] == ["1", "2", "3"]
+    assert docs[0] == Document(
+        id="1",
+        content="one",
+        metadata={
+            "title": "t1",
+            "source_url": "https://example.test/tasks",
+        },
+    )
+
+
+def test_paging_api_source_iter_pages_is_native() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        page = int(request.url.params["page"])
+        size = int(request.url.params["size"])
+        assert size == 1
+        pages = {
+            0: {"content": [{"id": "a", "description": "alpha"}], "last": False},
+            1: {"content": [{"id": "b", "description": "beta"}], "last": True},
+        }
+        return httpx.Response(200, json=pages[page])
+
+    source = PagingApiSource("https://example.test/tasks", page_size=10)
+    source._client = httpx.Client(transport=httpx.MockTransport(handler))
+
+    try:
+        pages = list(source.iter_pages(1))
+    finally:
+        source.close()
+
+    assert len(pages) == 2
+    assert pages[0][0].id == "a"
+    assert pages[1][0].content == "beta"
+    assert as_page_source(source) is source
+
+
+def test_paging_api_source_stops_on_empty_page() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        page = int(request.url.params["page"])
+        if page == 0:
+            return httpx.Response(
+                200,
+                json={
+                    "content": [{"id": "1", "description": "only"}],
+                    "last": False,
+                },
+            )
+        return httpx.Response(200, json={"content": [], "last": True})
+
+    source = PagingApiSource("https://example.test/tasks", page_size=1)
+    source._client = httpx.Client(transport=httpx.MockTransport(handler))
+
+    try:
+        docs = list(source.iter_documents())
+    finally:
+        source.close()
+
+    assert [d.id for d in docs] == ["1"]
+
+
+def test_paging_api_source_requires_connect() -> None:
+    source = PagingApiSource("https://example.test/tasks")
+    with pytest.raises(RuntimeError, match="not connected"):
+        list(source.iter_documents())
+
+
+def test_paging_api_source_rejects_invalid_page_size() -> None:
+    with pytest.raises(ValueError, match="page_size"):
+        PagingApiSource("https://example.test/tasks", page_size=0)
 
 
 def test_postgres_table_source_requires_table_or_query() -> None:

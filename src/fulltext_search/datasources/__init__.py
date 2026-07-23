@@ -7,6 +7,7 @@ from fulltext_search.datasources.paging import (
     PageSource,
     as_page_source,
 )
+from fulltext_search.datasources.paging_api import PagingApiSource
 from fulltext_search.datasources.postgres import PostgresTableSource
 from fulltext_search.datasources.remote import RemoteEndpointSource
 
@@ -16,6 +17,7 @@ __all__ = [
     "Document",
     "LocalFileSource",
     "PageSource",
+    "PagingApiSource",
     "PostgresTableSource",
     "RemoteEndpointSource",
     "as_page_source",
