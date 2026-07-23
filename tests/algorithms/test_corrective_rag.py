@@ -1,7 +1,7 @@
 """Tests for the DSPy Corrective RAG algorithm with mocked predictors.
 
-The LLM predictors (grade / rewrite / generate) are replaced with deterministic
-fakes so no network calls are made.
+The LLM predictors (grade / rewrite) are replaced with deterministic fakes so
+no network calls are made.
 """
 
 from __future__ import annotations
@@ -47,27 +47,16 @@ class FakeRewrite:
         return SimpleNamespace(rewritten_query=self.new_query)
 
 
-class FakeGenerate:
-    def __init__(self) -> None:
-        self.contexts: list[str] = []
-
-    def __call__(self, *, context: str, question: str) -> SimpleNamespace:
-        self.contexts.append(context)
-        return SimpleNamespace(answer=f"answer::{question}")
-
-
 def _build_algo(
     documents: list[Document],
     *,
     grade: FakeGrade,
     rewrite: FakeRewrite | None = None,
-    generate: FakeGenerate | None = None,
     min_relevant: int = 1,
 ) -> CorrectiveRAGAlgorithm:
     module = CorrectiveRAGModule(min_relevant=min_relevant)
     module.grade = grade
     module.rewrite = rewrite or FakeRewrite("unused")
-    module.generate = generate or FakeGenerate()
 
     algo = CorrectiveRAGAlgorithm(
         lm=dspy.LM("openai/gpt-4o-mini"),
@@ -148,21 +137,19 @@ def test_no_rewrite_when_relevant_docs_found() -> None:
     assert result.rewritten_query is None
 
 
-def test_answer_generates_from_context() -> None:
+def test_answer_returns_results_only() -> None:
     documents = [Document(id="a", content="alpha content")]
     grade = FakeGrade(relevant_terms=["alpha"])
-    generate = FakeGenerate()
-    algo = _build_algo(documents, grade=grade, generate=generate)
+    algo = _build_algo(documents, grade=grade)
 
     result = algo.answer("alpha", limit=5)
 
     assert isinstance(result, CorrectiveRAGAnswer)
-    assert result.answer == "answer::alpha"
+    assert "answer" not in result.__dataclass_fields__
     assert [r.document_id for r in result.results] == ["a"]
-    assert "alpha content" in generate.contexts[0]
 
 
-def test_search_and_answer_shapes_differ() -> None:
+def test_search_matches_answer_results() -> None:
     documents = [Document(id="a", content="alpha content")]
     grade = FakeGrade(relevant_terms=["alpha"])
     algo = _build_algo(documents, grade=grade)
@@ -172,6 +159,7 @@ def test_search_and_answer_shapes_differ() -> None:
 
     assert isinstance(hits, list)
     assert isinstance(answer, CorrectiveRAGAnswer)
+    assert [h.document_id for h in hits] == [r.document_id for r in answer.results]
 
 
 def test_clear_empties_index() -> None:

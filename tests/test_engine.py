@@ -36,7 +36,6 @@ class _FakeAlgorithm(SearchAlgorithm):
 
     def answer(self, query: str, *, limit: int = 10) -> CorrectiveRAGAnswer:
         return CorrectiveRAGAnswer(
-            answer=f"answer:{query}",
             results=self.search(query, limit=limit),
         )
 
@@ -96,7 +95,7 @@ def test_search_engine_indexes_and_asks() -> None:
     assert "Title: Request wires" in indexed.content
 
     result = engine.ask("wires")
-    assert result.answer == "answer:wires"
+    assert [r.document_id for r in result.results] == ["1"]
     assert result.results[0].document_id == "1"
 
 

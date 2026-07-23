@@ -8,11 +8,10 @@ https://www.meilisearch.com/blog/corrective-rag :
 2. **Grade** each candidate for relevance with an LLM.
 3. **Correct** weak retrieval: when too few relevant documents are found, rewrite
    the query and re-search the same corpus, then grade the new candidates.
-4. **Generate** an answer from the validated context (only in :meth:`answer`).
 
-``search`` returns graded/corrected hits; ``answer`` additionally generates a
-grounded answer. Retrieval scales via map-reduce; the LLM is used only on the
-small reduced candidate set (grade / rewrite / generate).
+Both :meth:`search` and :meth:`answer` return graded/corrected hits only (no
+answer generation). Retrieval scales via map-reduce; the LLM is used only on
+the small reduced candidate set (grade / rewrite).
 """
 
 from __future__ import annotations
@@ -46,11 +45,11 @@ RetrieveFn = Callable[[str, int], list[Candidate]]
 
 
 class GradeDocument(dspy.Signature):
-    """Grade how relevant a document is to answering the question.
+    """Grade how relevant a document is to the search query.
 
-    Use ``relevant`` when the document directly helps answer the question,
-    ``ambiguous`` when it is only tangentially related, and ``irrelevant`` when
-    it does not help at all.
+    Use ``relevant`` when the document directly matches what the query is
+    looking for, ``ambiguous`` when it is only tangentially related, and
+    ``irrelevant`` when it does not help at all.
     """
 
     question: str = dspy.InputField()
@@ -69,18 +68,6 @@ class RewriteQuery(dspy.Signature):
     question: str = dspy.InputField()
     rationale: str = dspy.InputField(desc="why the previous retrieval was weak")
     rewritten_query: str = dspy.OutputField()
-
-
-class GenerateAnswer(dspy.Signature):
-    """Answer the question using only the provided context.
-
-    Ground the answer in the context and ignore any low-confidence or
-    irrelevant material. If the context does not contain the answer, say so.
-    """
-
-    context: str = dspy.InputField()
-    question: str = dspy.InputField()
-    answer: str = dspy.OutputField()
 
 
 @dataclass(frozen=True, slots=True)
@@ -110,9 +97,8 @@ class CorrectionResult:
 
 @dataclass(frozen=True, slots=True)
 class CorrectiveRAGAnswer:
-    """A generated answer plus its supporting graded hits."""
+    """Graded/corrected search hits from Corrective RAG (no answer text)."""
 
-    answer: str
     results: list[SearchResult] = field(default_factory=list)
     rewritten_query: str | None = None
 
@@ -131,10 +117,11 @@ def _truncate(text: str, max_chars: int) -> str:
 
 
 class CorrectiveRAGModule(dspy.Module):
-    """DSPy module wiring grade -> correct -> generate.
+    """DSPy module wiring retrieve -> grade -> correct.
 
     Retrieval is injected as a callable so the same corpus is searched for both
-    the original and rewritten queries.
+    the original and rewritten queries. No answer is generated; output is
+    graded search hits only.
     """
 
     def __init__(
@@ -147,7 +134,6 @@ class CorrectiveRAGModule(dspy.Module):
         super().__init__()
         self.grade = dspy.Predict(GradeDocument)
         self.rewrite = dspy.Predict(RewriteQuery)
-        self.generate = dspy.ChainOfThought(GenerateAnswer)
         self.min_relevant = min_relevant
         self.max_document_chars = max_document_chars
         self.grade_workers = grade_workers
@@ -224,20 +210,6 @@ class CorrectiveRAGModule(dspy.Module):
 
         return CorrectionResult(graded=graded, rewritten_query=rewritten_query)
 
-    def build_context(
-        self,
-        graded: list[GradedCandidate],
-        limit: int,
-    ) -> str:
-        accepted = _rank_graded(graded)[:limit]
-        blocks: list[str] = []
-        for item in accepted:
-            content = _truncate(
-                item.candidate.document.content, self.max_document_chars
-            )
-            blocks.append(f"[{item.candidate.document_id}] {content}")
-        return "\n\n".join(blocks)
-
     def forward(
         self,
         question: str,
@@ -245,10 +217,7 @@ class CorrectiveRAGModule(dspy.Module):
         limit: int = 10,
     ) -> dspy.Prediction:
         correction = self.correct_and_retrieve(question, retrieve, limit)
-        context = self.build_context(correction.graded, limit)
-        prediction = self.generate(context=context, question=question)
         return dspy.Prediction(
-            answer=str(getattr(prediction, "answer", "")),
             graded=correction.graded,
             rewritten_query=correction.rewritten_query,
         )
@@ -336,21 +305,16 @@ class CorrectiveRAGAlgorithm(SearchAlgorithm):
         self._documents.clear()
 
     def search(self, query: str, *, limit: int = 10) -> list[SearchResult]:
-        module = self._ensure_module()
-        pool = max(limit, self.candidate_pool)
-        correction = module.correct_and_retrieve(
-            query, self._retrieve, pool
-        )
-        return self._to_search_results(correction.graded, limit)
+        return self.answer(query, limit=limit).results
 
     def answer(self, query: str, *, limit: int = 10) -> CorrectiveRAGAnswer:
+        """Retrieve, grade, and correct; return ranked hits (no answer text)."""
+
         module = self._ensure_module()
         pool = max(limit, self.candidate_pool)
         prediction = module(query, self._retrieve, pool)
-        results = self._to_search_results(prediction.graded, limit)
         return CorrectiveRAGAnswer(
-            answer=prediction.answer,
-            results=results,
+            results=self._to_search_results(prediction.graded, limit),
             rewritten_query=prediction.rewritten_query,
         )
 

@@ -352,7 +352,16 @@ def main(argv: list[str] | None = None) -> None:
     for record in records[: args.answers]:
         answer = algo.answer(record.query, limit=args.limit)
         print(f"\nQ: {record.query[:120]!r}")
-        print(f"A: {answer.answer[:300]!r}")
+        if answer.rewritten_query:
+            print(f"rewrite: {answer.rewritten_query!r}")
+        for i, hit in enumerate(answer.results, start=1):
+            title = ""
+            if hit.document is not None:
+                title = str(hit.document.metadata.get("title", ""))
+            print(
+                f"  [{i}] {title or hit.document_id!r} "
+                f"({hit.metadata.get('relevance')})"
+            )
 
     stats = aggregate(records)
     print("\n=== Results ===")

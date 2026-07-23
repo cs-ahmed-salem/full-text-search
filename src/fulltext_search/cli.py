@@ -33,8 +33,7 @@ def main(argv: list[str] | None = None) -> int:
     result = engine.ask(args.query, limit=args.limit)
     if result.rewritten_query:
         print(f"Rewritten query: {result.rewritten_query}\n")
-    print(f"A: {result.answer}\n")
-    print("Supporting hits:")
+    print("Hits:")
     for i, hit in enumerate(result.results, start=1):
         title = (hit.document.metadata or {}).get("title", hit.document_id)
         relevance = (hit.metadata or {}).get("relevance")

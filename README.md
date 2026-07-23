@@ -91,14 +91,14 @@ algo.index([Document(id="1", content="...")])
 # Graded/corrected hits (implements SearchAlgorithm.search)
 hits = algo.search("my question", limit=10)
 
-# Full CRAG: grounded answer + supporting hits
+# Same pipeline with rewrite metadata
 result = algo.answer("my question", limit=10)
-print(result.answer, result.rewritten_query)
+print(result.results, result.rewritten_query)
 ```
 
 It implements `SearchAlgorithm`, so it can be served over gRPC just like the
 stub: `serve(CorrectiveRAGAlgorithm(), port=50051)` (the `Search` RPC returns
-graded hits; answer generation is a Python API on the algorithm).
+graded hits).
 
 ## Test
 

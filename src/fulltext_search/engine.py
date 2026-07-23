@@ -13,7 +13,8 @@ Typical usage::
         headers={"x-internal-pass": "..."},
     )
     result = engine.ask("Should I send an email to complete task AC378?")
-    print(result.answer)
+    for hit in result.results:
+        print(hit.document_id, hit.metadata.get("relevance"))
 
 Or from environment variables (see :meth:`SearchEngine.from_env`)::
 
@@ -241,7 +242,7 @@ class SearchEngine:
         )
 
     def ask(self, query: str, *, limit: int | None = None) -> CorrectiveRAGAnswer:
-        """Answer ``query`` with grounded Corrective RAG generation.
+        """Run Corrective RAG and return graded search hits (no answer text).
 
         Requires an algorithm that implements ``answer`` (e.g.
         :class:`CorrectiveRAGAlgorithm`).
