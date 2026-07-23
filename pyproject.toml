@@ -33,6 +33,7 @@ Issues = "https://github.com/cs-ahmed-salem/full-text-search/issues"
 
 [project.scripts]
 fulltext-search-serve = "fulltext_search.interfaces.__main__:main"
+fulltext-search-ask = "fulltext_search.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/fulltext_search"]
