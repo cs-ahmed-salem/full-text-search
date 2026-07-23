@@ -49,8 +49,10 @@ include = [
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
+addopts = "-m 'not evaluation'"
 markers = [
     "performance: performance and benchmark tests",
+    "evaluation: live-LLM evaluation on the task dataset (opt-in; needs credentials)",
 ]
 
 [tool.coverage.run]

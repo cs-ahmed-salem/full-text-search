@@ -106,3 +106,17 @@ graded hits; answer generation is a Python API on the algorithm).
 pytest
 pytest -m performance
 ```
+
+The Corrective RAG evaluation on the task dataset
+(`tests/algorithms/test_corrective_rag_eval.py`) is a live-LLM test excluded
+from the default run. It skips when no credentials are available. Run it with:
+
+```bash
+pytest -m evaluation
+```
+
+Or run the same evaluation as a CLI report (with tunable knobs):
+
+```bash
+python scripts/eval_corrective_rag.py --num-queries 15 --limit 5
+```

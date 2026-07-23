@@ -17,6 +17,7 @@ small reduced candidate set (grade / rewrite / generate).
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Callable, Iterable, Literal
 
@@ -141,6 +142,7 @@ class CorrectiveRAGModule(dspy.Module):
         *,
         min_relevant: int = 1,
         max_document_chars: int = 2000,
+        grade_workers: int = 1,
     ) -> None:
         super().__init__()
         self.grade = dspy.Predict(GradeDocument)
@@ -148,28 +150,44 @@ class CorrectiveRAGModule(dspy.Module):
         self.generate = dspy.ChainOfThought(GenerateAnswer)
         self.min_relevant = min_relevant
         self.max_document_chars = max_document_chars
+        self.grade_workers = grade_workers
+
+    def _grade_one(
+        self,
+        question: str,
+        candidate: Candidate,
+    ) -> GradedCandidate:
+        document_text = _truncate(
+            candidate.document.content, self.max_document_chars
+        )
+        prediction = self.grade(question=question, document=document_text)
+        return GradedCandidate(
+            candidate=candidate,
+            relevance=_normalize_relevance(
+                getattr(prediction, "relevance", "ambiguous")
+            ),
+            rationale=str(getattr(prediction, "rationale", "")),
+        )
 
     def grade_candidates(
         self,
         question: str,
         candidates: list[Candidate],
     ) -> list[GradedCandidate]:
-        graded: list[GradedCandidate] = []
-        for candidate in candidates:
-            document_text = _truncate(
-                candidate.document.content, self.max_document_chars
-            )
-            prediction = self.grade(question=question, document=document_text)
-            graded.append(
-                GradedCandidate(
-                    candidate=candidate,
-                    relevance=_normalize_relevance(
-                        getattr(prediction, "relevance", "ambiguous")
-                    ),
-                    rationale=str(getattr(prediction, "rationale", "")),
+        if not candidates:
+            return []
+
+        if self.grade_workers <= 1:
+            return [self._grade_one(question, c) for c in candidates]
+
+        # LLM grading is I/O-bound; threads let the reduced candidate set be
+        # graded concurrently. ``map`` preserves candidate order.
+        with ThreadPoolExecutor(max_workers=self.grade_workers) as executor:
+            return list(
+                executor.map(
+                    lambda c: self._grade_one(question, c), candidates
                 )
             )
-        return graded
 
     def correct_and_retrieve(
         self,
@@ -286,6 +304,7 @@ class CorrectiveRAGAlgorithm(SearchAlgorithm):
         candidate_pool: int = 20,
         min_relevant: int = 1,
         max_document_chars: int = 2000,
+        grade_workers: int = 1,
         scorer: Scorer = default_lexical_score,
         module: CorrectiveRAGModule | None = None,
     ) -> None:
@@ -305,6 +324,7 @@ class CorrectiveRAGAlgorithm(SearchAlgorithm):
         self.candidate_pool = candidate_pool
         self.min_relevant = min_relevant
         self.max_document_chars = max_document_chars
+        self.grade_workers = grade_workers
         self.scorer = scorer
         self._module = module
 
@@ -383,5 +403,6 @@ class CorrectiveRAGAlgorithm(SearchAlgorithm):
             self._module = CorrectiveRAGModule(
                 min_relevant=self.min_relevant,
                 max_document_chars=self.max_document_chars,
+                grade_workers=self.grade_workers,
             )
         return self._module
