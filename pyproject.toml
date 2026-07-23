@@ -11,6 +11,7 @@ requires-python = ">=3.10"
 license = "MIT"
 authors = [{ name = "Clearsky" }]
 dependencies = [
+    "dspy>=2.5",
     "grpcio>=1.62",
     "httpx>=0.27",
     "protobuf>=5.26",
@@ -32,6 +33,7 @@ Issues = "https://github.com/cs-ahmed-salem/full-text-search/issues"
 
 [project.scripts]
 fulltext-search-serve = "fulltext_search.interfaces.__main__:main"
+fulltext-search-ask = "fulltext_search.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/fulltext_search"]
@@ -48,8 +50,10 @@ include = [
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
+addopts = "-m 'not evaluation'"
 markers = [
     "performance: performance and benchmark tests",
+    "evaluation: live-LLM evaluation on the task dataset (opt-in; needs credentials)",
 ]
 
 [tool.coverage.run]
