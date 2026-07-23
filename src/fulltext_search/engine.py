@@ -12,9 +12,9 @@ Typical usage::
         url="http://localhost:8080/api/v1/.../tasks",
         headers={"x-internal-pass": "..."},
     )
-    result = engine.ask("Should I send an email to complete task AC378?")
-    for hit in result.results:
-        print(hit.document_id, hit.metadata.get("relevance"))
+    result = engine.ask("Should I send an email to complete task AC378?", top_k=5)
+    for record in result.records:
+        print(record.id, record.metadata.get("title"))
 
 Or from environment variables (see :meth:`SearchEngine.from_env`)::
 
@@ -92,8 +92,8 @@ class SearchEngine:
     document_transform:
         Optional per-document rewrite applied before indexing (e.g.
         :func:`enrich_task_document`).
-    default_limit:
-        Default hit limit for :meth:`ask` / :meth:`search`.
+    default_top_k:
+        Default top-k for :meth:`ask` / :meth:`search` (must be ``> 0``).
     autoload:
         When true (default), documents are loaded from ``source`` during init.
     """
@@ -104,7 +104,8 @@ class SearchEngine:
         algorithm: SearchAlgorithm | None = None,
         *,
         document_transform: DocumentTransform | None = enrich_task_document,
-        default_limit: int = 10,
+        default_top_k: int = 10,
+        default_limit: int | None = None,
         autoload: bool = True,
     ) -> None:
         if algorithm is None:
@@ -114,10 +115,15 @@ class SearchEngine:
         else:
             self.model = getattr(getattr(algorithm, "_lm", None), "model", None)
 
+        top_k = default_limit if default_limit is not None else default_top_k
+        if top_k < 1:
+            raise ValueError(f"default_top_k must be > 0, got {top_k}")
+
         self.source = source
         self.algorithm = algorithm
         self.document_transform = document_transform
-        self.default_limit = default_limit
+        self.default_top_k = top_k
+        self.default_limit = top_k  # backwards-compatible alias
         self.document_count = 0
 
         if autoload:
@@ -133,7 +139,8 @@ class SearchEngine:
         page_size: int = 50,
         algorithm: SearchAlgorithm | None = None,
         document_transform: DocumentTransform | None = enrich_task_document,
-        default_limit: int = 10,
+        default_top_k: int = 10,
+        default_limit: int | None = None,
         **paging_kwargs: Any,
     ) -> SearchEngine:
         """Build an engine backed by :class:`PagingApiSource`."""
@@ -149,6 +156,7 @@ class SearchEngine:
             source,
             algorithm,
             document_transform=document_transform,
+            default_top_k=default_top_k,
             default_limit=default_limit,
         )
 
@@ -162,7 +170,8 @@ class SearchEngine:
         page_size: int | None = None,
         algorithm: SearchAlgorithm | None = None,
         document_transform: DocumentTransform | None = enrich_task_document,
-        default_limit: int = 10,
+        default_top_k: int = 10,
+        default_limit: int | None = None,
     ) -> SearchEngine:
         """Build a paging-API engine from environment / ``.env`` configuration.
 
@@ -206,6 +215,7 @@ class SearchEngine:
             page_size=resolved_page_size,
             algorithm=algorithm,
             document_transform=document_transform,
+            default_top_k=default_top_k,
             default_limit=default_limit,
         )
 
@@ -234,15 +244,26 @@ class SearchEngine:
         self.algorithm.index(batch)
         self.document_count += len(batch)
 
-    def search(self, query: str, *, limit: int | None = None) -> list[SearchResult]:
-        """Return ranked search hits for ``query``."""
+    def search(
+        self,
+        query: str,
+        *,
+        top_k: int | None = None,
+        limit: int | None = None,
+    ) -> list[SearchResult]:
+        """Return the top-k datasource records by relevance for ``query``."""
 
-        return self.algorithm.search(
-            query, limit=self.default_limit if limit is None else limit
-        )
+        k = self._resolve_top_k(top_k=top_k, limit=limit)
+        return self.algorithm.search(query, limit=k)
 
-    def ask(self, query: str, *, limit: int | None = None) -> CorrectiveRAGAnswer:
-        """Run Corrective RAG and return graded search hits (no answer text).
+    def ask(
+        self,
+        query: str,
+        *,
+        top_k: int | None = None,
+        limit: int | None = None,
+    ) -> CorrectiveRAGAnswer:
+        """Run Corrective RAG and return top-k datasource records.
 
         Requires an algorithm that implements ``answer`` (e.g.
         :class:`CorrectiveRAGAlgorithm`).
@@ -254,9 +275,24 @@ class SearchEngine:
                 f"{type(self.algorithm).__name__} does not implement answer(); "
                 "use search() or pass a CorrectiveRAGAlgorithm"
             )
-        return answer_fn(
-            query, limit=self.default_limit if limit is None else limit
+        k = self._resolve_top_k(top_k=top_k, limit=limit)
+        return answer_fn(query, top_k=k)
+
+    def _resolve_top_k(
+        self,
+        *,
+        top_k: int | None,
+        limit: int | None,
+    ) -> int:
+        if top_k is not None and limit is not None and top_k != limit:
+            raise ValueError("Pass only one of top_k or limit")
+        k = self.default_top_k if top_k is None and limit is None else (
+            top_k if top_k is not None else limit
         )
+        assert k is not None
+        if k < 1:
+            raise ValueError(f"top_k must be > 0, got {k}")
+        return k
 
 
 def _identity(document: Document) -> Document:

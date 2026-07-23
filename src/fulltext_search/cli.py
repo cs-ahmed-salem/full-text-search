@@ -13,8 +13,14 @@ def main(argv: list[str] | None = None) -> int:
         prog="fulltext-search-ask",
         description="Query a paging-API corpus with Corrective RAG.",
     )
-    parser.add_argument("query", help="Natural-language question to answer")
-    parser.add_argument("--limit", type=int, default=10)
+    parser.add_argument("query", help="Natural-language search query")
+    parser.add_argument(
+        "--top-k",
+        type=int,
+        default=10,
+        dest="top_k",
+        help="Number of top-relevance records to return (must be > 0)",
+    )
     parser.add_argument(
         "--url",
         default=None,
@@ -24,18 +30,20 @@ def main(argv: list[str] | None = None) -> int:
 
     from fulltext_search.engine import SearchEngine
 
-    engine = SearchEngine.from_env(url=args.url, default_limit=args.limit)
+    engine = SearchEngine.from_env(url=args.url, default_top_k=args.top_k)
     print(f"LM: {engine.model}")
     print(f"API: {getattr(engine.source, 'url', engine.source)}")
     print(f"Indexed documents: {engine.document_count}")
     print(f"Q: {args.query}\n")
 
-    result = engine.ask(args.query, limit=args.limit)
+    result = engine.ask(args.query, top_k=args.top_k)
     if result.rewritten_query:
         print(f"Rewritten query: {result.rewritten_query}\n")
-    print("Hits:")
-    for i, hit in enumerate(result.results, start=1):
-        title = (hit.document.metadata or {}).get("title", hit.document_id)
+    print(f"Top-{args.top_k} records:")
+    for i, (hit, record) in enumerate(
+        zip(result.results, result.records), start=1
+    ):
+        title = record.metadata.get("title", record.id)
         relevance = (hit.metadata or {}).get("relevance")
         rationale = (hit.metadata or {}).get("rationale")
         print(f"  [{i}] {title} ({relevance})")

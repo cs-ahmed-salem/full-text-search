@@ -97,10 +97,17 @@ class CorrectionResult:
 
 @dataclass(frozen=True, slots=True)
 class CorrectiveRAGAnswer:
-    """Graded/corrected search hits from Corrective RAG (no answer text)."""
+    """Top-k graded datasource records from Corrective RAG (no answer text)."""
 
     results: list[SearchResult] = field(default_factory=list)
+    records: list[Document] = field(default_factory=list)
     rewritten_query: str | None = None
+
+
+def _require_top_k(top_k: int) -> int:
+    if top_k < 1:
+        raise ValueError(f"top_k must be > 0, got {top_k}")
+    return top_k
 
 
 def _normalize_relevance(value: object) -> str:
@@ -224,15 +231,17 @@ class CorrectiveRAGModule(dspy.Module):
 
 
 def _rank_graded(graded: list[GradedCandidate]) -> list[GradedCandidate]:
-    accepted = [g for g in graded if g.is_accepted]
-    accepted.sort(
+    """Order candidates by relevance weight, then lexical score."""
+
+    ranked = list(graded)
+    ranked.sort(
         key=lambda g: (
             -g.relevance_weight,
             -g.candidate.score,
             g.candidate.document_id,
         )
     )
-    return accepted
+    return ranked
 
 
 class CorrectiveRAGAlgorithm(SearchAlgorithm):
@@ -305,18 +314,27 @@ class CorrectiveRAGAlgorithm(SearchAlgorithm):
         self._documents.clear()
 
     def search(self, query: str, *, limit: int = 10) -> list[SearchResult]:
-        return self.answer(query, limit=limit).results
+        """Return the top ``limit`` datasource records by relevance.
 
-    def answer(self, query: str, *, limit: int = 10) -> CorrectiveRAGAnswer:
-        """Retrieve, grade, and correct; return ranked hits (no answer text)."""
+        ``limit`` is the top-k size and must be ``> 0``.
+        """
 
+        return self.answer(query, top_k=limit).results
+
+    def answer(self, query: str, *, top_k: int = 10) -> CorrectiveRAGAnswer:
+        """Retrieve, grade, and correct; return top-k datasource records.
+
+        Parameters
+        ----------
+        top_k:
+            Number of highest-relevance records to return. Must be ``> 0``.
+        """
+
+        top_k = _require_top_k(top_k)
         module = self._ensure_module()
-        pool = max(limit, self.candidate_pool)
+        pool = max(top_k, self.candidate_pool)
         prediction = module(query, self._retrieve, pool)
-        return CorrectiveRAGAnswer(
-            results=self._to_search_results(prediction.graded, limit),
-            rewritten_query=prediction.rewritten_query,
-        )
+        return self._to_answer(prediction.graded, top_k, prediction.rewritten_query)
 
     def _retrieve(self, query: str, limit: int) -> list[Candidate]:
         pages = iter_document_pages(
@@ -331,20 +349,42 @@ class CorrectiveRAGAlgorithm(SearchAlgorithm):
             max_workers=self.max_workers,
         )
 
+    def _to_answer(
+        self,
+        graded: list[GradedCandidate],
+        top_k: int,
+        rewritten_query: str | None,
+    ) -> CorrectiveRAGAnswer:
+        results = self._to_search_results(graded, top_k)
+        records = [
+            result.document
+            for result in results
+            if result.document is not None
+        ]
+        return CorrectiveRAGAnswer(
+            results=results,
+            records=records,
+            rewritten_query=rewritten_query,
+        )
+
     def _to_search_results(
         self,
         graded: list[GradedCandidate],
-        limit: int,
+        top_k: int,
     ) -> list[SearchResult]:
-        ranked = _rank_graded(graded)[:limit]
+        ranked = _rank_graded(graded)[:top_k]
         results: list[SearchResult] = []
         for item in ranked:
             candidate = item.candidate
+            # Prefer the indexed datasource record when available.
+            document = self._documents.get(
+                candidate.document_id, candidate.document
+            )
             results.append(
                 SearchResult(
                     document_id=candidate.document_id,
                     score=item.relevance_weight,
-                    document=candidate.document,
+                    document=document,
                     metadata={
                         "relevance": item.relevance,
                         "rationale": item.rationale,

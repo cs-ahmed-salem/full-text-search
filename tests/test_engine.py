@@ -34,9 +34,11 @@ class _FakeAlgorithm(SearchAlgorithm):
         ]
         return hits[:limit]
 
-    def answer(self, query: str, *, limit: int = 10) -> CorrectiveRAGAnswer:
+    def answer(self, query: str, *, top_k: int = 10) -> CorrectiveRAGAnswer:
+        results = self.search(query, limit=top_k)
         return CorrectiveRAGAnswer(
-            results=self.search(query, limit=limit),
+            results=results,
+            records=[r.document for r in results if r.document is not None],
         )
 
 
@@ -95,7 +97,7 @@ def test_search_engine_indexes_and_asks() -> None:
     assert "Title: Request wires" in indexed.content
 
     result = engine.ask("wires")
-    assert [r.document_id for r in result.results] == ["1"]
+    assert [r.id for r in result.records] == ["1"]
     assert result.results[0].document_id == "1"
 
 

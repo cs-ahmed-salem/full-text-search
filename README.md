@@ -169,9 +169,9 @@ tests/
 from fulltext_search import SearchEngine
 
 engine = SearchEngine.from_env()  # FULLTEXT_SEARCH_API_URL / _PASS from .env
-result = engine.ask("my question")
-for hit in result.results:
-    print(hit.document_id, hit.metadata.get("relevance"))
+result = engine.ask("my question", top_k=5)
+for record in result.records:
+    print(record.id, record.metadata.get("title"))
 ```
 
 Or wire pieces explicitly:
@@ -187,7 +187,7 @@ engine = SearchEngine(
     PagingApiSource(url, headers={"x-internal-pass": "..."}),
     CorrectiveRAGAlgorithm(),
 )
-hits = engine.search("my question", limit=10)
+hits = engine.search("my question", top_k=5)
 ```
 
 ## gRPC interface
@@ -242,9 +242,9 @@ from fulltext_search.datasources import Document
 algo = CorrectiveRAGAlgorithm(batch_size=256, max_workers=8)
 algo.index([Document(id="1", content="...")])
 
-hits = algo.search("my question", limit=10)
-result = algo.answer("my question", limit=10)
-print(result.results, result.rewritten_query)
+hits = algo.search("my question", limit=5)
+result = algo.answer("my question", top_k=5)
+print(result.records, result.rewritten_query)
 ```
 
 It implements `SearchAlgorithm`, so it can be served over gRPC:
