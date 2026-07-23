@@ -139,8 +139,8 @@ class CorrectiveRAGModule(dspy.Module):
         grade_workers: int = 1,
     ) -> None:
         super().__init__()
-        self.grade = dspy.Predict(GradeDocument)
-        self.rewrite = dspy.Predict(RewriteQuery)
+        self.grade = dspy.ChainOfThought(GradeDocument)
+        self.rewrite = dspy.ChainOfThought(RewriteQuery)
         self.min_relevant = min_relevant
         self.max_document_chars = max_document_chars
         self.grade_workers = grade_workers
