@@ -12,9 +12,11 @@ from fulltext_search.datasources.base import Document
 from fulltext_search.interfaces.converters import (
     document_from_pb,
     document_to_pb,
+    search_page_from_pb,
 )
 from fulltext_search.interfaces.v1 import fulltext_search_pb2 as pb2
 from fulltext_search.interfaces.v1 import fulltext_search_pb2_grpc as pb2_grpc
+from fulltext_search.results.page import SearchPage
 
 
 class FullTextSearchClient:
@@ -56,6 +58,36 @@ class FullTextSearchClient:
                 )
             )
         return results
+
+    def create_full_search(
+        self,
+        query: str,
+        *,
+        page: int = 0,
+        size: int = 20,
+    ) -> SearchPage:
+        """Run a brute-force full-corpus search and return the first page."""
+
+        response = self._stub.CreateFullSearch(
+            pb2.CreateFullSearchRequest(query=query, page=page, size=size)
+        )
+        return search_page_from_pb(response)
+
+    def get_search_page(
+        self,
+        session_id: str,
+        *,
+        page: int = 0,
+        size: int = 20,
+    ) -> SearchPage:
+        """Fetch a page from an existing brute-force search session."""
+
+        response = self._stub.GetSearchPage(
+            pb2.GetSearchPageRequest(
+                session_id=session_id, page=page, size=size
+            )
+        )
+        return search_page_from_pb(response)
 
     def clear(self) -> bool:
         response = self._stub.Clear(pb2.ClearRequest())

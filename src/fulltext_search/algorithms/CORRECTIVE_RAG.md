@@ -80,6 +80,47 @@ for record, hit in zip(result.records, result.results):
 `rewritten_query`; it does **not** generate natural-language answers.
 `top_k` must be ``> 0``.
 
+## Brute-force pageable search
+
+`answer_all(query)` runs Corrective RAG as a multithreaded brute-force scan of
+the **entire** indexed corpus rather than a reduced candidate pool:
+
+1. **Score all** — `map_reduce.map_reduce_score_all` lexically scores every
+   document in parallel pages, keeping even zero-score docs so the LLM sees the
+   whole corpus.
+2. **Grade all** — every document is graded (`grade_workers` threads).
+3. **Correct** — if fewer than `min_relevant` grade `relevant`, the query is
+   rewritten once and every not-yet-`relevant` document is re-graded; the better
+   grade per document wins.
+4. **Filter + rank** — only documents graded `relevant` are kept, ordered by
+   lexical score then `document_id`.
+
+Because the whole result set can be large, it is served through a **pageable**
+API instead of a top-k list. `SearchEngine.search_all` persists the ranked
+results to a temp-file session (`fulltext_search.results.SessionStore`) and
+returns a Spring Data-style `SearchPage`:
+
+```python
+from fulltext_search import SearchEngine
+
+engine = SearchEngine.from_env()
+first = engine.search_all("send email to complete task", page=0, size=20)
+print(first.total_elements, first.total_pages, first.last)
+for hit in first.content:
+    print(hit.document_id, hit.metadata["relevance"], hit.metadata["rationale"])
+
+# Page further without re-running the LLM grading.
+second = engine.get_search_page(first.session_id, page=1, size=20)
+```
+
+Over gRPC the same flow is exposed by `CreateFullSearch` (returns the first
+`PageableSearchResponse` plus a `session_id`) and `GetSearchPage` (fetches
+later pages). These RPCs require an engine-backed servicer; otherwise they
+return `UNIMPLEMENTED`. An unknown `session_id` returns `NOT_FOUND`.
+
+`SearchPage` fields: `content`, `page`, `size`, `total_elements`,
+`total_pages`, `last`, `session_id`, `rewritten_query`.
+
 ## Key types
 
 | Type | Role |

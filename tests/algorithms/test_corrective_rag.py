@@ -200,3 +200,72 @@ def test_constructor_validates_arguments() -> None:
         CorrectiveRAGAlgorithm(batch_size=0)
     with pytest.raises(ValueError):
         CorrectiveRAGAlgorithm(candidate_pool=0)
+
+
+def test_answer_all_keeps_only_relevant() -> None:
+    documents = [
+        Document(id="a", content="alpha content here"),
+        Document(id="b", content="beta only content"),
+        Document(id="c", content="alpha extra alpha"),
+    ]
+    grade = FakeGrade(relevant_terms=["alpha"])
+    algo = _build_algo(documents, grade=grade)
+
+    result = algo.answer_all("alpha")
+
+    # Only the alpha docs are relevant; beta is dropped entirely.
+    assert {r.id for r in result.records} == {"a", "c"}
+    assert all(
+        hit.metadata["relevance"] == "relevant" for hit in result.results
+    )
+    # Ranked by lexical score: "c" has two hits, so it outranks "a".
+    assert [r.document_id for r in result.results] == ["c", "a"]
+
+
+def test_answer_all_grades_every_document() -> None:
+    documents = [
+        Document(id="a", content="alpha"),
+        Document(id="b", content="totally unrelated"),
+    ]
+    grade = FakeGrade(relevant_terms=["alpha"])
+    algo = _build_algo(documents, grade=grade)
+
+    algo.answer_all("alpha")
+
+    # Both docs are graded even though "b" has zero lexical score.
+    assert len(grade.calls) == 2
+
+
+def test_answer_all_rewrite_regrades_non_relevant() -> None:
+    documents = [
+        Document(id="a", content="beta beta"),
+        Document(id="b", content="gamma"),
+    ]
+
+    class SwitchGrade:
+        """Irrelevant on the first query, relevant on the rewritten one."""
+
+        def __init__(self) -> None:
+            self.seen_questions: list[str] = []
+
+        def __call__(
+            self, *, question: str, document: str
+        ) -> SimpleNamespace:
+            self.seen_questions.append(question)
+            relevance = "relevant" if question == "beta" else "irrelevant"
+            return SimpleNamespace(relevance=relevance, rationale="x")
+
+    module = CorrectiveRAGModule(min_relevant=1)
+    module.grade = SwitchGrade()
+    rewrite = FakeRewrite("beta")
+    module.rewrite = rewrite
+    algo = CorrectiveRAGAlgorithm(
+        lm=dspy.LM("openai/gpt-4o-mini"), module=module
+    )
+    algo.index(documents)
+
+    result = algo.answer_all("zzz")
+
+    assert rewrite.calls == 1
+    assert result.rewritten_query == "beta"
+    assert {r.id for r in result.records} == {"a", "b"}

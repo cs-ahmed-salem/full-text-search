@@ -37,6 +37,7 @@ from fulltext_search.common.env import ensure_llm_ready
 from fulltext_search.common.llms import configure_default_lm
 from fulltext_search.datasources.base import DataSource, Document
 from fulltext_search.datasources.paging_api import PagingApiSource
+from fulltext_search.results import SearchPage, SessionStore
 
 DocumentTransform = Callable[[Document], Document]
 
@@ -96,6 +97,9 @@ class SearchEngine:
         Default top-k for :meth:`ask` / :meth:`search` (must be ``> 0``).
     autoload:
         When true (default), documents are loaded from ``source`` during init.
+    session_store:
+        Store for pageable brute-force search sessions. Defaults to a temp-dir
+        :class:`~fulltext_search.results.SessionStore`.
     """
 
     def __init__(
@@ -107,6 +111,7 @@ class SearchEngine:
         default_top_k: int = 10,
         default_limit: int | None = None,
         autoload: bool = True,
+        session_store: SessionStore | None = None,
     ) -> None:
         if algorithm is None:
             model = ensure_llm_ready()
@@ -125,6 +130,7 @@ class SearchEngine:
         self.default_top_k = top_k
         self.default_limit = top_k  # backwards-compatible alias
         self.document_count = 0
+        self.session_store = session_store or SessionStore()
 
         if autoload:
             self.reload()
@@ -278,6 +284,52 @@ class SearchEngine:
         k = self._resolve_top_k(top_k=top_k, limit=limit)
         return answer_fn(query, top_k=k)
 
+    def search_all(
+        self,
+        query: str,
+        *,
+        page: int = 0,
+        size: int = 20,
+    ) -> SearchPage:
+        """Brute-force search the whole corpus and return the first page.
+
+        Grades every indexed document, persists the ranked ``relevant`` records
+        to a session, and returns the requested page. Use the returned
+        ``session_id`` with :meth:`get_search_page` to page further without
+        re-running LLM grading.
+
+        Requires an algorithm implementing ``answer_all`` (e.g.
+        :class:`CorrectiveRAGAlgorithm`).
+        """
+
+        answer_all_fn = getattr(self.algorithm, "answer_all", None)
+        if answer_all_fn is None:
+            raise TypeError(
+                f"{type(self.algorithm).__name__} does not implement "
+                "answer_all(); pass a CorrectiveRAGAlgorithm"
+            )
+        _validate_paging(page=page, size=size)
+
+        answer = answer_all_fn(query)
+        session_id = self.session_store.create(
+            answer.results,
+            query=query,
+            rewritten_query=answer.rewritten_query,
+        )
+        return self.session_store.get_page(session_id, page=page, size=size)
+
+    def get_search_page(
+        self,
+        session_id: str,
+        *,
+        page: int = 0,
+        size: int = 20,
+    ) -> SearchPage:
+        """Return a page from a previously created brute-force search session."""
+
+        _validate_paging(page=page, size=size)
+        return self.session_store.get_page(session_id, page=page, size=size)
+
     def _resolve_top_k(
         self,
         *,
@@ -293,6 +345,13 @@ class SearchEngine:
         if k < 1:
             raise ValueError(f"top_k must be > 0, got {k}")
         return k
+
+
+def _validate_paging(*, page: int, size: int) -> None:
+    if page < 0:
+        raise ValueError(f"page must be >= 0, got {page}")
+    if size < 1:
+        raise ValueError(f"size must be >= 1, got {size}")
 
 
 def _identity(document: Document) -> Document:

@@ -5,7 +5,7 @@ import warnings
 
 from fulltext_search.interfaces.v1 import fulltext_search_pb2 as fulltext__search__pb2
 
-GRPC_GENERATED_VERSION = '1.82.1'
+GRPC_GENERATED_VERSION = '1.67.1'
 GRPC_VERSION = grpc.__version__
 _version_not_supported = False
 
@@ -18,14 +18,14 @@ except ImportError:
 if _version_not_supported:
     raise RuntimeError(
         f'The grpc package installed is at version {GRPC_VERSION},'
-        + ' but the generated code in fulltext_search_pb2_grpc.py depends on'
+        + f' but the generated code in fulltext_search_pb2_grpc.py depends on'
         + f' grpcio>={GRPC_GENERATED_VERSION}.'
         + f' Please upgrade your grpc module to grpcio>={GRPC_GENERATED_VERSION}'
         + f' or downgrade your generated code using grpcio-tools<={GRPC_VERSION}.'
     )
 
 
-class FullTextSearchStub:
+class FullTextSearchStub(object):
     """Full-text search service exposing algorithm operations over gRPC.
     """
 
@@ -45,6 +45,16 @@ class FullTextSearchStub:
                 request_serializer=fulltext__search__pb2.SearchRequest.SerializeToString,
                 response_deserializer=fulltext__search__pb2.SearchResponse.FromString,
                 _registered_method=True)
+        self.CreateFullSearch = channel.unary_unary(
+                '/fulltext_search.v1.FullTextSearch/CreateFullSearch',
+                request_serializer=fulltext__search__pb2.CreateFullSearchRequest.SerializeToString,
+                response_deserializer=fulltext__search__pb2.PageableSearchResponse.FromString,
+                _registered_method=True)
+        self.GetSearchPage = channel.unary_unary(
+                '/fulltext_search.v1.FullTextSearch/GetSearchPage',
+                request_serializer=fulltext__search__pb2.GetSearchPageRequest.SerializeToString,
+                response_deserializer=fulltext__search__pb2.PageableSearchResponse.FromString,
+                _registered_method=True)
         self.Clear = channel.unary_unary(
                 '/fulltext_search.v1.FullTextSearch/Clear',
                 request_serializer=fulltext__search__pb2.ClearRequest.SerializeToString,
@@ -52,7 +62,7 @@ class FullTextSearchStub:
                 _registered_method=True)
 
 
-class FullTextSearchServicer:
+class FullTextSearchServicer(object):
     """Full-text search service exposing algorithm operations over gRPC.
     """
 
@@ -65,6 +75,20 @@ class FullTextSearchServicer:
 
     def Search(self, request, context):
         """Search the index and return ranked hits.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def CreateFullSearch(self, request, context):
+        """Brute-force search the whole corpus; returns the first pageable page.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def GetSearchPage(self, request, context):
+        """Fetch a page from a previously created brute-force search session.
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -90,6 +114,16 @@ def add_FullTextSearchServicer_to_server(servicer, server):
                     request_deserializer=fulltext__search__pb2.SearchRequest.FromString,
                     response_serializer=fulltext__search__pb2.SearchResponse.SerializeToString,
             ),
+            'CreateFullSearch': grpc.unary_unary_rpc_method_handler(
+                    servicer.CreateFullSearch,
+                    request_deserializer=fulltext__search__pb2.CreateFullSearchRequest.FromString,
+                    response_serializer=fulltext__search__pb2.PageableSearchResponse.SerializeToString,
+            ),
+            'GetSearchPage': grpc.unary_unary_rpc_method_handler(
+                    servicer.GetSearchPage,
+                    request_deserializer=fulltext__search__pb2.GetSearchPageRequest.FromString,
+                    response_serializer=fulltext__search__pb2.PageableSearchResponse.SerializeToString,
+            ),
             'Clear': grpc.unary_unary_rpc_method_handler(
                     servicer.Clear,
                     request_deserializer=fulltext__search__pb2.ClearRequest.FromString,
@@ -103,7 +137,7 @@ def add_FullTextSearchServicer_to_server(servicer, server):
 
 
  # This class is part of an EXPERIMENTAL API.
-class FullTextSearch:
+class FullTextSearch(object):
     """Full-text search service exposing algorithm operations over gRPC.
     """
 
@@ -151,6 +185,60 @@ class FullTextSearch:
             '/fulltext_search.v1.FullTextSearch/Search',
             fulltext__search__pb2.SearchRequest.SerializeToString,
             fulltext__search__pb2.SearchResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def CreateFullSearch(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/fulltext_search.v1.FullTextSearch/CreateFullSearch',
+            fulltext__search__pb2.CreateFullSearchRequest.SerializeToString,
+            fulltext__search__pb2.PageableSearchResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def GetSearchPage(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/fulltext_search.v1.FullTextSearch/GetSearchPage',
+            fulltext__search__pb2.GetSearchPageRequest.SerializeToString,
+            fulltext__search__pb2.PageableSearchResponse.FromString,
             options,
             channel_credentials,
             insecure,

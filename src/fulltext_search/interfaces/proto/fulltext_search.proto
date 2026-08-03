@@ -12,6 +12,12 @@ service FullTextSearch {
   // Search the index and return ranked hits.
   rpc Search(SearchRequest) returns (SearchResponse);
 
+  // Brute-force search the whole corpus; returns the first pageable page.
+  rpc CreateFullSearch(CreateFullSearchRequest) returns (PageableSearchResponse);
+
+  // Fetch a page from a previously created brute-force search session.
+  rpc GetSearchPage(GetSearchPageRequest) returns (PageableSearchResponse);
+
   // Remove all indexed documents when supported by the algorithm.
   rpc Clear(ClearRequest) returns (ClearResponse);
 }
@@ -45,6 +51,29 @@ message SearchResult {
 
 message SearchResponse {
   repeated SearchResult results = 1;
+}
+
+message CreateFullSearchRequest {
+  string query = 1;
+  int32 page = 2;  // defaults to 0 when unset
+  int32 size = 3;  // defaults to 20 when unset
+}
+
+message GetSearchPageRequest {
+  string session_id = 1;
+  int32 page = 2;  // defaults to 0 when unset
+  int32 size = 3;  // defaults to 20 when unset
+}
+
+message PageableSearchResponse {
+  repeated SearchResult content = 1;
+  string session_id = 2;
+  int32 page = 3;
+  int32 size = 4;
+  int32 total_elements = 5;
+  int32 total_pages = 6;
+  bool last = 7;
+  string rewritten_query = 8;
 }
 
 message ClearRequest {}

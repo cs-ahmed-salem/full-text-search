@@ -28,6 +28,7 @@ from fulltext_search.algorithms.map_reduce import (
     Scorer,
     default_lexical_score,
     map_reduce_retrieve,
+    map_reduce_score_all,
 )
 from fulltext_search.common.batching import iter_document_pages
 from fulltext_search.common.llms import configure_default_lm
@@ -217,6 +218,64 @@ class CorrectiveRAGModule(dspy.Module):
 
         return CorrectionResult(graded=graded, rewritten_query=rewritten_query)
 
+    def correct_and_grade_all(
+        self,
+        question: str,
+        candidates: list[Candidate],
+    ) -> CorrectionResult:
+        """Grade every candidate, then re-grade non-relevant ones on rewrite.
+
+        Unlike :meth:`correct_and_retrieve`, retrieval already covers the whole
+        corpus, so correction does not re-retrieve. If fewer than
+        ``min_relevant`` documents grade ``relevant``, the query is rewritten
+        once and every not-yet-``relevant`` document is graded again; the better
+        grade per document is kept.
+        """
+
+        graded = self.grade_candidates(question, candidates)
+        relevant = [g for g in graded if g.relevance == "relevant"]
+        rewritten_query: str | None = None
+
+        if len(relevant) < self.min_relevant:
+            rationale = (
+                f"Only {len(relevant)} of {len(graded)} documents were "
+                "relevant to the question."
+            )
+            prediction = self.rewrite(question=question, rationale=rationale)
+            rewritten_query = str(
+                getattr(prediction, "rewritten_query", "")
+            ).strip()
+
+            if rewritten_query and rewritten_query != question:
+                to_regrade = [
+                    g.candidate
+                    for g in graded
+                    if g.relevance != "relevant"
+                ]
+                regraded = {
+                    g.candidate.document_id: g
+                    for g in self.grade_candidates(rewritten_query, to_regrade)
+                }
+                graded = [
+                    self._better_grade(g, regraded.get(g.candidate.document_id))
+                    for g in graded
+                ]
+            else:
+                rewritten_query = None
+
+        return CorrectionResult(graded=graded, rewritten_query=rewritten_query)
+
+    @staticmethod
+    def _better_grade(
+        original: GradedCandidate,
+        rewritten: GradedCandidate | None,
+    ) -> GradedCandidate:
+        if rewritten is None:
+            return original
+        if rewritten.relevance_weight > original.relevance_weight:
+            return rewritten
+        return original
+
     def forward(
         self,
         question: str,
@@ -336,6 +395,23 @@ class CorrectiveRAGAlgorithm(SearchAlgorithm):
         prediction = module(query, self._retrieve, pool)
         return self._to_answer(prediction.graded, top_k, prediction.rewritten_query)
 
+    def answer_all(self, query: str) -> CorrectiveRAGAnswer:
+        """Brute-force Corrective RAG over the entire indexed corpus.
+
+        Lexically scores and LLM-grades *every* indexed document (in parallel),
+        applies corrective query rewrite when retrieval is weak, then keeps only
+        documents graded ``relevant`` ranked by lexical score. Unlike
+        :meth:`answer`, there is no top-k truncation: all relevant records are
+        returned.
+        """
+
+        module = self._ensure_module()
+        candidates = self._retrieve_all(query)
+        correction = module.correct_and_grade_all(query, candidates)
+        return self._to_full_answer(
+            correction.graded, correction.rewritten_query
+        )
+
     def _retrieve(self, query: str, limit: int) -> list[Candidate]:
         pages = iter_document_pages(
             self._documents.values(), self.batch_size
@@ -347,6 +423,35 @@ class CorrectiveRAGAlgorithm(SearchAlgorithm):
             limit=limit,
             recall_per_page=self.recall_per_batch,
             max_workers=self.max_workers,
+        )
+
+    def _retrieve_all(self, query: str) -> list[Candidate]:
+        pages = iter_document_pages(
+            self._documents.values(), self.batch_size
+        )
+        return map_reduce_score_all(
+            pages,
+            query,
+            scorer=self.scorer,
+            max_workers=self.max_workers,
+        )
+
+    def _to_full_answer(
+        self,
+        graded: list[GradedCandidate],
+        rewritten_query: str | None,
+    ) -> CorrectiveRAGAnswer:
+        relevant = [g for g in graded if g.relevance == "relevant"]
+        results = self._build_search_results(_rank_graded(relevant))
+        records = [
+            result.document
+            for result in results
+            if result.document is not None
+        ]
+        return CorrectiveRAGAnswer(
+            results=results,
+            records=records,
+            rewritten_query=rewritten_query,
         )
 
     def _to_answer(
@@ -372,7 +477,12 @@ class CorrectiveRAGAlgorithm(SearchAlgorithm):
         graded: list[GradedCandidate],
         top_k: int,
     ) -> list[SearchResult]:
-        ranked = _rank_graded(graded)[:top_k]
+        return self._build_search_results(_rank_graded(graded)[:top_k])
+
+    def _build_search_results(
+        self,
+        ranked: list[GradedCandidate],
+    ) -> list[SearchResult]:
         results: list[SearchResult] = []
         for item in ranked:
             candidate = item.candidate
