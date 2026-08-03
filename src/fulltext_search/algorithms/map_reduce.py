@@ -150,3 +150,71 @@ def map_reduce_retrieve(
 
     merged = sorted(best.values(), key=lambda c: (-c.score, c.document_id))
     return merged[:limit]
+
+
+def _score_page_all(
+    page: list[Document],
+    query: str,
+    scorer: Scorer,
+) -> list[Candidate]:
+    return [
+        Candidate(document.id, scorer(query, document), document)
+        for document in page
+    ]
+
+
+def map_reduce_score_all(
+    pages: Iterable[list[Document]],
+    query: str,
+    *,
+    scorer: Scorer = default_lexical_score,
+    max_workers: int = 4,
+) -> list[Candidate]:
+    """Score *every* document across ``pages`` via parallel map-reduce.
+
+    Unlike :func:`map_reduce_retrieve`, this performs no top-k truncation and
+    keeps every document, including those with a lexical score of ``0.0``. It
+    powers the brute-force Corrective RAG path where the LLM grades the whole
+    corpus rather than a reduced candidate pool.
+
+    Pages are scored in parallel threads; at most ``max_workers`` pages are in
+    flight at once so lazy/streaming page iterators are consumed incrementally.
+    Results are deduped by ``document_id`` (keeping the highest score) and
+    returned sorted by score descending, ``document_id`` ascending for stable
+    ordering.
+    """
+
+    if max_workers < 1:
+        raise ValueError(f"max_workers must be >= 1, got {max_workers}")
+
+    best: dict[str, Candidate] = {}
+
+    def _merge(candidates: list[Candidate]) -> None:
+        for candidate in candidates:
+            current = best.get(candidate.document_id)
+            if current is None or candidate.score > current.score:
+                best[candidate.document_id] = candidate
+
+    page_iter = iter(pages)
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        in_flight = set()
+        for _ in range(max_workers):
+            page = next(page_iter, None)
+            if page is None:
+                break
+            in_flight.add(
+                executor.submit(_score_page_all, page, query, scorer)
+            )
+
+        while in_flight:
+            done, in_flight = wait(in_flight, return_when=FIRST_COMPLETED)
+            for future in done:
+                _merge(future.result())
+                page = next(page_iter, None)
+                if page is not None:
+                    in_flight.add(
+                        executor.submit(_score_page_all, page, query, scorer)
+                    )
+
+    return sorted(best.values(), key=lambda c: (-c.score, c.document_id))

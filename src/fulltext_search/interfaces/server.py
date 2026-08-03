@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from concurrent import futures
+from typing import Any
 
 import grpc
 
@@ -17,11 +18,17 @@ def create_server(
     host: str = "[::]",
     port: int = 50051,
     max_workers: int = 10,
+    engine: Any | None = None,
 ) -> grpc.Server:
-    """Build a gRPC server bound to ``host:port``."""
+    """Build a gRPC server bound to ``host:port``.
+
+    Pass ``engine`` (a :class:`~fulltext_search.engine.SearchEngine` or any
+    object with ``search_all`` / ``get_search_page``) to enable the pageable
+    brute-force RPCs.
+    """
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=max_workers))
     pb2_grpc.add_FullTextSearchServicer_to_server(
-        FullTextSearchServicer(algorithm),
+        FullTextSearchServicer(algorithm, engine=engine),
         server,
     )
     bound_port = server.add_insecure_port(f"{host}:{port}")
@@ -36,6 +43,7 @@ def serve(
     host: str = "[::]",
     port: int = 50051,
     max_workers: int = 10,
+    engine: Any | None = None,
 ) -> None:
     """Start a blocking gRPC server until interrupted."""
     server = create_server(
@@ -43,6 +51,7 @@ def serve(
         host=host,
         port=port,
         max_workers=max_workers,
+        engine=engine,
     )
     server.start()
     print(f"fulltext-search gRPC listening on {host}:{port}")

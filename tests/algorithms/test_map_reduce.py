@@ -7,6 +7,7 @@ import pytest
 from fulltext_search.algorithms.map_reduce import (
     default_lexical_score,
     map_reduce_retrieve,
+    map_reduce_score_all,
 )
 from fulltext_search.common.batching import batched, iter_document_pages
 from fulltext_search.datasources.base import Document
@@ -126,3 +127,51 @@ def test_map_reduce_validates_arguments() -> None:
         map_reduce_retrieve([], "q", max_workers=0)
     with pytest.raises(ValueError):
         map_reduce_retrieve([], "q", recall_per_page=0)
+
+
+def test_score_all_includes_zero_score_docs() -> None:
+    documents = _docs("alpha beta", "gamma only", "delta")
+    pages = list(iter_document_pages(documents, 2))
+
+    results = map_reduce_score_all(pages, "alpha")
+
+    # Every document is returned, even those with no lexical match.
+    assert {c.document_id for c in results} == {"0", "1", "2"}
+    scores = {c.document_id: c.score for c in results}
+    assert scores["0"] > 0.0
+    assert scores["1"] == 0.0
+    assert scores["2"] == 0.0
+
+
+def test_score_all_sorted_and_deduped() -> None:
+    duplicate = Document(id="dup", content="alpha alpha")
+    pages = [
+        [duplicate, Document(id="x", content="alpha")],
+        [duplicate, Document(id="y", content="nothing")],
+    ]
+
+    results = map_reduce_score_all(pages, "alpha")
+
+    ids = [c.document_id for c in results]
+    assert ids.count("dup") == 1
+    # Highest score first, ties broken by id; zero-score doc last.
+    assert ids[0] == "dup"
+    assert ids[-1] == "y"
+
+
+def test_score_all_validates_workers() -> None:
+    with pytest.raises(ValueError):
+        map_reduce_score_all([], "q", max_workers=0)
+
+
+def test_score_all_single_worker_equivalent() -> None:
+    documents = _docs("alpha beta", "alpha", "beta gamma", "zzz")
+
+    one = map_reduce_score_all(
+        list(iter_document_pages(documents, 2)), "alpha beta", max_workers=1
+    )
+    many = map_reduce_score_all(
+        list(iter_document_pages(documents, 2)), "alpha beta", max_workers=4
+    )
+
+    assert [c.document_id for c in one] == [c.document_id for c in many]

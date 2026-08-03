@@ -190,6 +190,22 @@ engine = SearchEngine(
 hits = engine.search("my question", top_k=5)
 ```
 
+### Pageable brute-force search
+
+For a multithreaded brute-force scan over the whole corpus (grade every
+document, keep only `relevant` records, ranked with reasoning), use the
+pageable API. Results are persisted to a temp-file session so you can page
+through them without re-running the LLM grading:
+
+```python
+first = engine.search_all("my question", page=0, size=20)
+print(first.total_elements, first.total_pages, first.last)
+for hit in first.content:
+    print(hit.document_id, hit.metadata["relevance"], hit.metadata["rationale"])
+
+next_page = engine.get_search_page(first.session_id, page=1, size=20)
+```
+
 ## gRPC interface
 
 Start a server (uses the temporary stub algorithm until real ones land):
@@ -211,6 +227,22 @@ serve(StubSearchAlgorithm(), port=50051)
 with FullTextSearchClient("localhost:50051") as client:
     client.index([])  # documents
     hits = client.search("query", limit=10)
+```
+
+To expose the pageable brute-force RPCs (`CreateFullSearch` / `GetSearchPage`),
+serve with an engine:
+
+```python
+from fulltext_search import SearchEngine
+from fulltext_search.interfaces import serve
+
+engine = SearchEngine.from_env()
+serve(engine.algorithm, port=50051, engine=engine)
+
+# client process
+with FullTextSearchClient("localhost:50051") as client:
+    page = client.create_full_search("query", page=0, size=20)
+    more = client.get_search_page(page.session_id, page=1, size=20)
 ```
 
 Regenerate stubs after editing the proto:

@@ -8,6 +8,7 @@ from fulltext_search.algorithms.corrective_rag import (
 from fulltext_search.datasources.base import DataSource, Document
 from fulltext_search.datasources.paging_api import PagingApiSource
 from fulltext_search.engine import SearchEngine, enrich_task_document
+from fulltext_search.results import SearchPage, SessionStore
 
 __all__ = [
     "CorrectiveRAGAlgorithm",
@@ -17,7 +18,9 @@ __all__ = [
     "PagingApiSource",
     "SearchAlgorithm",
     "SearchEngine",
+    "SearchPage",
     "SearchResult",
+    "SessionStore",
     "enrich_task_document",
 ]
 
