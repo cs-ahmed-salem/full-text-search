@@ -82,7 +82,11 @@ class SessionStore:
 
     def __init__(self, directory: str | Path | None = None) -> None:
         self.directory = Path(directory) if directory else _default_directory()
-        self.directory.mkdir(parents=True, exist_ok=True)
+        self.directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+        if self.directory.is_symlink() or not self.directory.is_dir():
+            raise ValueError(
+                f"SessionStore directory must be a real directory, got {self.directory}"
+            )
 
     def _data_path(self, session_id: str) -> Path:
         return self.directory / f"{session_id}.jsonl"
